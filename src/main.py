@@ -15,9 +15,10 @@ def main():
     parser_new.add_argument("name", help="Project name")
 
     # generate outline
-    parser_outline = subparsers.add_parser("outline", help="Generate an outline for the project")
+    parser_outline = subparsers.add_parser("outline", help="Generate or import an outline")
     parser_outline.add_argument("name", help="Project name")
     parser_outline.add_argument("--model", help="Override model for this generation")
+    parser_outline.add_argument("--from-file", help="Path to a manually written outline")
 
     # generate chapter
     parser_chapter = subparsers.add_parser("generate-chapter", help="Generate a chapter draft")
@@ -37,10 +38,10 @@ def main():
         create_project(args.name)
 
     elif args.command == "outline":
-        generate_outline(args.name, args.model)
+        generate_outline(args.name, model_override=args.model, from_file=args.from_file)
 
     elif args.command == "generate-chapter":
-        generate_chapter(args.name, args.number, args.model)
+        generate_chapter(args.name, args.number, model_override=args.model)
 
     elif args.command == "models":
         manage_models(args.name, list_flag=args.list, set_primary=args.set_primary)

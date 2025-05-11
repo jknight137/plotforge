@@ -34,14 +34,27 @@ def create_project(name):
     project_path = get_project_path(name)
     ensure_dirs(project_path)
 
+    theme_path = BASE_DIR / "theme.txt"
+    premise_path = BASE_DIR / "premise.txt"
+
+    if not theme_path.exists():
+        raise FileNotFoundError("theme.txt not found in project root.")
+    if not premise_path.exists():
+        raise FileNotFoundError("premise.txt not found in project root.")
+
+    theme = theme_path.read_text(encoding="utf-8").strip()
+    premise = premise_path.read_text(encoding="utf-8").strip()
+
     metadata = {
         "title": name,
-        "theme": "",
+        "theme": theme,
+        "premise": premise,
         "models": {
-            "primary": "meta-llama/Llama-2-7b-chat-hf",
-            "available": ["meta-llama/Llama-2-7b-chat-hf"]
+            "primary": "mistralai/Mistral-7B-Instruct-v0.3",
+            "available": ["mistralai/Mistral-7B-Instruct-v0.3"]
         },
-        "chapters": []
+        "chapters": [],
+        "status": "initialized"
     }
 
     with open(project_path / "project.json", "w", encoding="utf-8") as f:
@@ -53,34 +66,37 @@ def create_project(name):
     init_git_repo(project_path)
     print(f"Project '{name}' created successfully.")
 
-def generate_outline(name, model_override=None):
+def generate_outline(name, model_override=None, from_file=None):
     project_path = get_project_path(name)
     if not (project_path / "project.json").exists():
         print(f"Project '{name}' does not exist. Run 'new' first.")
         return
 
     metadata = load_metadata(project_path)
-    model_id = model_override or metadata["models"]["primary"]
 
-    prompt = (
-        f"Generate an engaging outline for a fiction novel titled '{metadata['title']}'. "
-        "Include 10 chapters with short summaries."
-    )
-
-    model = AIModel(model_id)
-    outline = model.generate(prompt)
+    if from_file:
+        outline_text = Path(from_file).read_text(encoding="utf-8")
+    else:
+        model_id = model_override or metadata["models"]["primary"]
+        theme = metadata["theme"]
+        prompt = (
+            f"Using the following theme: '{theme}', generate an outline for a fiction novel.\n"
+            "Include 10 chapters with short summaries."
+        )
+        model = AIModel(model_id)
+        outline_text = model.generate(prompt, max_new_tokens=800)
 
     with open(project_path / "outline.md", "w", encoding="utf-8") as f:
-        f.write(outline)
+        f.write(outline_text)
 
     log_history(project_path, {
         "type": "outline",
-        "model": model_id,
-        "prompt": prompt,
-        "output": outline
+        "model": model_override or metadata["models"]["primary"],
+        "prompt": "manual" if from_file else prompt,
+        "output": outline_text
     })
 
-    print("Outline generated successfully.")
+    print("Outline saved successfully.")
 
 def summarize_chapter(text):
     return text[:250].replace("\n", " ") + "..."
@@ -93,7 +109,7 @@ def generate_chapter(name, chapter_number, model_override=None):
 
     outline_path = project_path / "outline.md"
     if not outline_path.exists():
-        print("Outline not found. Generate one first.")
+        print("Outline not found. Generate or provide one first.")
         return
 
     chapter_title = f"Chapter {chapter_number}"
@@ -102,26 +118,26 @@ def generate_chapter(name, chapter_number, model_override=None):
     story_so_far = context_path.read_text(encoding="utf-8")
 
     prompt = (
-        f"{story_so_far}\n\n"
-        f"Using the outline:\n{outline}\n\n"
-        f"Write the full text for {chapter_title} in a compelling and consistent narrative style."
+        f"The story theme is: {metadata['theme']}\n\n"
+        f"Premise: {metadata['premise']}\n\n"
+        f"Story so far:\n{story_so_far}\n\n"
+        f"Outline:\n{outline}\n\n"
+        f"Write a full detailed version of {chapter_title} in about 5000 words."
+        " Maintain continuity, character voice, and consistent plot logic."
     )
 
-    output = model.generate(prompt, max_length=800)
+    output = model.generate(prompt, max_new_tokens=3500)
 
     chapter_file = project_path / "chapters" / f"{chapter_number:02}_chapter.md"
     chapter_file.write_text(output, encoding="utf-8")
 
-    # Save summary for future context
     summary = summarize_chapter(output)
     with open(project_path / "context" / f"{chapter_number:02}_summary.txt", "w", encoding="utf-8") as f:
         f.write(summary)
 
-    # Update story so far
     with open(context_path, "a", encoding="utf-8") as f:
         f.write(f"{chapter_title}: {summary}\n")
 
-    # Save to history
     hist_file = project_path / "chapters" / "history" / f"{chapter_number:02}_gen1.md"
     hist_file.write_text(output, encoding="utf-8")
 
@@ -133,7 +149,10 @@ def generate_chapter(name, chapter_number, model_override=None):
         "output": output
     })
 
-    print(f"Chapter {chapter_number} generated successfully.")
+    metadata["chapters"].append({"number": chapter_number, "status": "draft"})
+    save_metadata(project_path, metadata)
+
+    print(f"Chapter {chapter_number} generated and saved.")
 
 def manage_models(name, list_flag=False, set_primary=None):
     project_path = get_project_path(name)

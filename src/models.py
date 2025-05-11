@@ -33,3 +33,16 @@ class AIModel:
             self.model.eval()
         except Exception as e:
             raise RuntimeError(f"Failed to load model '{model_name}': {e}")
+    def generate(self, prompt: str, max_new_tokens: int = 512) -> str:
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=0.8,
+                top_p=0.95,
+                top_k=50,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
