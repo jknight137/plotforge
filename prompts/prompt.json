@@ -1,0 +1,114 @@
+{
+  "description": "PlotForge is a local-first, model-flexible fiction-writing automation tool that supports incremental generation of long-form narrative using page-level and chapter-level workflows.",
+
+  "dependencies": {
+    "python_version": ">=3.10",
+    "packages": ["ollama", "transformers", "torch", "requests"]
+  },
+
+  "model_backends": [
+    "ollama_local",
+    "huggingface_local",
+    "openai_api (planned)",
+    "manual editing supported"
+  ],
+
+  "source_structure": {
+    "root": "plotforge/",
+    "src": "src/",
+    "modules": ["cli.py", "models.py"],
+    "project_root": "projects/<ProjectName>/",
+    "subdirs": ["chapters/", "summaries/", "drafts/"],
+    "required_inputs": ["theme.txt", "premise.txt"],
+    "optional_files": [
+      "story_state.json (planned)",
+      "plotforge.db (optional future)"
+    ],
+    "generated_files": [
+      "project.json",
+      "page_<N>_draft.md",
+      "page_<N>_summary.txt",
+      "chapter_<N>_draft.md"
+    ]
+  },
+
+  "cli_commands": {
+    "new": "python src/main.py new \"<ProjectName>\"",
+    "generate_page": "python src/main.py generate-page \"<ProjectName>\" --number <N> [--model <Model>] [--test-models]",
+    "generate_chapter": "python src/main.py generate-chapter \"<ProjectName>\" --number <N> [--model <Model>]",
+    "models": "python src/main.py models \"<ProjectName>\" --list | --set <Model>"
+  },
+
+  "project_json_format": {
+    "title": "string",
+    "theme": "string (copied from theme.txt)",
+    "premise": "string (copied from premise.txt)",
+    "models": {
+      "primary": "model_id_string",
+      "available": ["model_id_string1", "model_id_string2"]
+    },
+    "chapters": []
+  },
+
+  "page_generation": {
+    "context": [
+      "premise (always included)",
+      "previous page summary (250 words max)"
+    ],
+    "prompt_template": "## DO NOT output any heading. Begin directly with story text.\n\nPREMISE:\n{premise}\n\nPREVIOUS PAGE SUMMARY:\n{prev_summary}\n\nTASK:\nWrite ~500 words continuing this dystopian AI-ruled world. Stay on premise; no fantasy genre drift.",
+    "postprocess": [
+      "strip headings like 'Page N Draft'",
+      "sanitize em-dashes to '-'",
+      "save full text draft",
+      "generate summary from first 100–250 words"
+    ]
+  },
+
+  "chapter_generation": {
+    "prompt": "THEME:\n{theme}\n\nPREMISE:\n{premise}\n\nWrite Chapter {N} (~5000 words) continuing the plot.",
+    "output": "chapter_<N>_draft[_{model}].md"
+  },
+
+  "story_continuity": {
+    "status": "in progress (manual review with future automation)",
+    "current_mechanism": "previous page summaries + fixed prompt",
+    "planned": {
+      "story_state.json": {
+        "characters": {
+          "<name>": {
+            "status": "alive/dead",
+            "goal": "string",
+            "location": "string"
+          }
+        },
+        "world_state": { "<key>": "value" },
+        "plot_threads": ["string"],
+        "timeline": [{ "page": "<N>", "event": "string" }]
+      },
+      "approval_hooks": "user manually approves/rejects page/chapter, triggering optional summary or state update",
+      "semantic_review": "TBD — future comparison of page N and N-1 for plot drift"
+    }
+  },
+
+  "generation_settings": {
+    "page_min_words": 500,
+    "chapter_min_words": 5000,
+    "summary_max_words": 250,
+    "context_limit": "~500 tokens (to keep prompt efficient)",
+    "prompt_safety": [
+      "no genre drift",
+      "no heading reuse",
+      "clear premise anchoring"
+    ]
+  },
+
+  "files_attached": [
+    "theme.txt",
+    "premise.txt",
+    "cli.py",
+    "models.py",
+    "project.json",
+    "page_<N>_draft.md",
+    "page_<N>_summary.txt"
+  ]
+}

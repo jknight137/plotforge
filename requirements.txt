@@ -6,3 +6,4 @@ gitpython==3.1.43
 huggingface-hub==0.23.1
 accelerate==0.30.1
 python-dotenv==1.0.1
+ollama

@@ -1,173 +1,171 @@
-import os
 import json
+import re
+import time
 from pathlib import Path
-from datetime import datetime
-from git_manager import init_git_repo
 from models import AIModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECTS_DIR = BASE_DIR / "projects"
 
-def get_project_path(name):
-    return PROJECTS_DIR / name
+# ───────────────────────── Project Management ──────────────────────────
+def create_project(name: str):
+    project_path = PROJECTS_DIR / name
+    project_path.mkdir(parents=True, exist_ok=True)
 
-def load_metadata(project_path):
-    with open(project_path / "project.json", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_metadata(project_path, metadata):
-    with open(project_path / "project.json", "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=4)
-
-def ensure_dirs(project_path):
-    (project_path / "chapters").mkdir(parents=True, exist_ok=True)
-    (project_path / "context").mkdir(parents=True, exist_ok=True)
-    (project_path / "chapters" / "history").mkdir(parents=True, exist_ok=True)
-
-def log_history(project_path, entry):
-    history_path = project_path / "history.jsonl"
-    entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
-    with open(history_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-def create_project(name):
-    project_path = get_project_path(name)
-    ensure_dirs(project_path)
-
-    theme_path = BASE_DIR / "theme.txt"
-    premise_path = BASE_DIR / "premise.txt"
-
-    if not theme_path.exists():
-        raise FileNotFoundError("theme.txt not found in project root.")
-    if not premise_path.exists():
-        raise FileNotFoundError("premise.txt not found in project root.")
-
-    theme = theme_path.read_text(encoding="utf-8").strip()
-    premise = premise_path.read_text(encoding="utf-8").strip()
+    theme = (BASE_DIR / "theme.txt").read_text(encoding="utf-8").strip()
+    premise = (BASE_DIR / "premise.txt").read_text(encoding="utf-8").strip()
 
     metadata = {
         "title": name,
         "theme": theme,
         "premise": premise,
         "models": {
-            "primary": "mistralai/Mistral-7B-Instruct-v0.3",
-            "available": ["mistralai/Mistral-7B-Instruct-v0.3"]
+            "primary": "mistral:7b-instruct-v0.3-q4_K_M",
+            "available": ["mistral:7b-instruct-v0.3-q4_K_M"]
         },
-        "chapters": [],
-        "status": "initialized"
+        "chapters": []
     }
 
     with open(project_path / "project.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=4)
 
-    (project_path / "outline.md").touch()
-    (project_path / "context" / "story_so_far.md").touch()
+    for sub in ("chapters", "drafts", "summaries"):
+        (project_path / sub).mkdir(exist_ok=True)
 
-    init_git_repo(project_path)
-    print(f"Project '{name}' created successfully.")
+    print(f"[Project Created] {name}")
 
-def generate_outline(name, model_override=None, from_file=None):
-    project_path = get_project_path(name)
-    if not (project_path / "project.json").exists():
-        print(f"Project '{name}' does not exist. Run 'new' first.")
-        return
+# ───────────────────────── Utility Helpers ─────────────────────────────
+def load_metadata(project_path: Path):
+    with open(project_path / "project.json", encoding="utf-8") as f:
+        return json.load(f)
 
-    metadata = load_metadata(project_path)
+def load_prev_summary(summaries_path: Path, page_number: int) -> str:
+    """Return previous page summary text (empty if first page)."""
+    file = summaries_path / f"page_{page_number - 1}_summary.txt"
+    return file.read_text(encoding="utf-8") if file.exists() else ""
 
-    if from_file:
-        outline_text = Path(from_file).read_text(encoding="utf-8")
-    else:
-        model_id = model_override or metadata["models"]["primary"]
-        theme = metadata["theme"]
-        prompt = (
-            f"Using the following theme: '{theme}', generate an outline for a fiction novel.\n"
-            "Include 10 chapters with short summaries."
-        )
-        model = AIModel(model_id)
-        outline_text = model.generate(prompt, max_new_tokens=800)
+def strip_heading(text: str) -> str:
+    """Remove leading 'Page N Draft' or similar."""
+    return re.sub(r"^Page\s+\d+\s+Draft[:\s-]*", "", text, flags=re.IGNORECASE).lstrip()
 
-    with open(project_path / "outline.md", "w", encoding="utf-8") as f:
-        f.write(outline_text)
+def sanitize_text(text: str) -> str:
+    """Replace Unicode em‑dashes with simple hyphens."""
+    return text.replace("\u2014", "-").replace("—", "-")
 
-    log_history(project_path, {
-        "type": "outline",
-        "model": model_override or metadata["models"]["primary"],
-        "prompt": "manual" if from_file else prompt,
-        "output": outline_text
-    })
-
-    print("Outline saved successfully.")
-
-def summarize_chapter(text):
-    return text[:250].replace("\n", " ") + "..."
-
-def generate_chapter(name, chapter_number, model_override=None):
-    project_path = get_project_path(name)
-    metadata = load_metadata(project_path)
-    model_id = model_override or metadata["models"]["primary"]
-    model = AIModel(model_id)
-
-    outline_path = project_path / "outline.md"
-    if not outline_path.exists():
-        print("Outline not found. Generate or provide one first.")
-        return
-
-    chapter_title = f"Chapter {chapter_number}"
-    outline = outline_path.read_text(encoding="utf-8")
-    context_path = project_path / "context" / "story_so_far.md"
-    story_so_far = context_path.read_text(encoding="utf-8")
-
-    prompt = (
-        f"The story theme is: {metadata['theme']}\n\n"
-        f"Premise: {metadata['premise']}\n\n"
-        f"Story so far:\n{story_so_far}\n\n"
-        f"Outline:\n{outline}\n\n"
-        f"Write a full detailed version of {chapter_title} in about 5000 words."
-        " Maintain continuity, character voice, and consistent plot logic."
+def save_summary(full_text: str, summaries_path: Path, page_number: int):
+    cleaned = strip_heading(full_text)
+    words = cleaned.split()
+    take = min(250, max(100, len(words) // 2))  # 100–250 words, ~½ page
+    summary = " ".join(words[:take])
+    (summaries_path / f"page_{page_number}_summary.txt").write_text(
+        summary, encoding="utf-8"
     )
 
-    output = model.generate(prompt, max_new_tokens=3500)
+# ───────────────────────── Prompt Composition ──────────────────────────
+def build_prompt(prev_summary: str, premise: str, page_number: int) -> str:
+    return (
+        f"## DO NOT output any heading. Begin directly with story text.\n\n"
+        f"PREMISE (must remain consistent):\n{premise}\n\n"
+        f"PREVIOUS PAGE SUMMARY:\n{prev_summary}\n\n"
+        "Write the next ~500 words that continue this dystopian AI‑ruled world. "
+        "Preserve characters, setting, and plot threads; do not introduce medieval fantasy, taverns, or magic.\n"
+    )
 
-    chapter_file = project_path / "chapters" / f"{chapter_number:02}_chapter.md"
-    chapter_file.write_text(output, encoding="utf-8")
+# ───────────────────────── Page Generation ─────────────────────────────
+def generate_and_save_page(model_name: str,
+                           prompt: str,
+                           chapters_path: Path,
+                           summaries_path: Path,
+                           page_number: int,
+                           test_mode: bool):
+    model = AIModel(model_name)
+    try:
+        text, words, duration = model.generate(prompt, min_words=500)
+    except Exception as e:
+        print(f"[Error] {model_name}: {e}")
+        return
 
-    summary = summarize_chapter(output)
-    with open(project_path / "context" / f"{chapter_number:02}_summary.txt", "w", encoding="utf-8") as f:
-        f.write(summary)
+    text = sanitize_text(text)
+    text = strip_heading(text)
 
-    with open(context_path, "a", encoding="utf-8") as f:
-        f.write(f"{chapter_title}: {summary}\n")
+    suffix = f"_{model_name.replace('/', '_')}" if test_mode else ""
+    draft_path = chapters_path / f"page_{page_number}_draft{suffix}.md"
 
-    hist_file = project_path / "chapters" / "history" / f"{chapter_number:02}_gen1.md"
-    hist_file.write_text(output, encoding="utf-8")
+    if text.strip():
+        draft_path.write_text(text.strip(), encoding="utf-8")
+        save_summary(text, summaries_path, page_number)
+        print(f"[Saved] Page {page_number} draft{suffix} ({words} words, {duration:.2f}s)")
+    else:
+        print(f"[Skipped] Empty result from {model_name}")
 
-    log_history(project_path, {
-        "type": "chapter_draft",
-        "chapter": chapter_number,
-        "model": model_id,
-        "prompt": prompt,
-        "output": output
-    })
+def generate_page(project: str, page_number: int, model_override=None, test_models=False):
+    project_path = PROJECTS_DIR / project
+    if not (project_path / "project.json").exists():
+        print(f"[Error] Project '{project}' not found.")
+        return
 
-    metadata["chapters"].append({"number": chapter_number, "status": "draft"})
-    save_metadata(project_path, metadata)
+    meta = load_metadata(project_path)
+    chapters = project_path / "chapters"
+    summaries = project_path / "summaries"
 
-    print(f"Chapter {chapter_number} generated and saved.")
+    models = meta["models"]["available"] if test_models else [
+        model_override or meta["models"]["primary"]
+    ]
+    prev_summary = load_prev_summary(summaries, page_number)
+    prompt = build_prompt(prev_summary, meta["premise"], page_number)
 
-def manage_models(name, list_flag=False, set_primary=None):
-    project_path = get_project_path(name)
-    metadata = load_metadata(project_path)
+    for m in models:
+        generate_and_save_page(m, prompt, chapters, summaries, page_number, test_models)
+
+# ───────────────────────── Chapter Generation (unchanged) ─────────────
+def generate_chapter(project: str, number: int, model_override=None, test_models=False):
+    project_path = PROJECTS_DIR / project
+    if not (project_path / "project.json").exists():
+        print(f"[Error] Project '{project}' not found.")
+        return
+
+    meta = load_metadata(project_path)
+    chapters = project_path / "chapters"
+    prompt = (
+        f"THEME:\n{meta['theme']}\n\n"
+        f"PREMISE:\n{meta['premise']}\n\n"
+        f"Write Chapter {number} (~5000 words) continuing the plot."
+    )
+
+    models = meta["models"]["available"] if test_models else [
+        model_override or meta["models"]["primary"]
+    ]
+    for m in models:
+        model = AIModel(m)
+        try:
+            text, words, duration = model.generate(prompt, min_words=5000)
+        except Exception as e:
+            print(f"[Error] {m}: {e}")
+            continue
+
+        text = sanitize_text(text)
+        suffix = f"_{m.replace('/', '_')}" if test_models else ""
+        (chapters / f"chapter_{number}_draft{suffix}.md").write_text(text, encoding="utf-8")
+        print(f"[Saved] Chapter {number} draft{suffix} ({words} words, {duration:.2f}s)")
+
+# ───────────────────────── Model Management ────────────────────────────
+def manage_models(project: str, list_flag=False, set_primary=None):
+    path = PROJECTS_DIR / project / "project.json"
+    if not path.exists():
+        print(f"[Error] Project '{project}' not found.")
+        return
+    meta = json.loads(path.read_text(encoding="utf-8"))
 
     if list_flag:
-        print("Available models:")
-        for m in metadata["models"]["available"]:
-            tag = " (primary)" if m == metadata["models"]["primary"] else ""
-            print(f" - {m}{tag}")
+        print("[Models]")
+        for m in meta["models"]["available"]:
+            tag = " (primary)" if m == meta["models"]["primary"] else ""
+            print(f"- {m}{tag}")
         return
 
     if set_primary:
-        if set_primary not in metadata["models"]["available"]:
-            metadata["models"]["available"].append(set_primary)
-        metadata["models"]["primary"] = set_primary
-        save_metadata(project_path, metadata)
-        print(f"Primary model set to: {set_primary}")
+        if set_primary not in meta["models"]["available"]:
+            meta["models"]["available"].append(set_primary)
+        meta["models"]["primary"] = set_primary
+        path.write_text(json.dumps(meta, indent=4))
+        print(f"[Model Updated] Primary set to {set_primary}")
