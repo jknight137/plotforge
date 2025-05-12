@@ -8,3 +8,4 @@ accelerate==0.30.1
 python-dotenv==1.0.1
 ollama
 openai
+json-repair
